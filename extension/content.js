@@ -169,15 +169,17 @@
                         if (index === 0) {
                             firstChoice = item;
                         } else if(index < 5) {
-                        html += `<li role="button" tabindex="0">${item.text}</li>`;
+                            html += `<li idx_suggestion="${index}" confidence="${item.confidence}" role="button" tabindex="0">${item.text}</li>`;
                         }
                     });
                     html += "</ul>";
                     list.innerHTML = html;
                 }
 
+                input.confidence = firstChoice.confidence;
                 input.value = firstChoice.text;
                 input.size = input.value.length;
+                input.idx_suggestion = 0;
 
                 if (list) {
                     list.style.width = `${input.offsetWidth}px`;
@@ -208,20 +210,24 @@
                     e.stopPropagation();
                     list.classList.add('close');
                     form.removeEventListener("submit", _submit_form);
-                    resolve(input.value);
+                    resolve(input);
                 });
 
                 list.addEventListener("click", function _choose_item(e) {
                     e.preventDefault();
                     list.removeEventListener("click", _choose_item);
                     if (e.target instanceof HTMLLIElement) {
+                        let result = [];
+                        result.confidence = e.target.getAttribute("confidence");
+                        result.value = e.target.textContent;
+                        result.idx_suggestion = e.target.getAttribute("idx_suggestion");
                         list.classList.add('close');
                         input.value = e.target.textContent;
                         input.size = input.value.length;
                         list.style.width = `${input.offsetWidth}px`;
 
                         setTimeout(() => {
-                            resolve(e.target.textContent);
+                            resolve(result);
                         }, 75);
                     }
                 });
@@ -231,13 +237,17 @@
                     if (key === 13) {
                         list.removeEventListener("click", _choose_item);
                         if (e.target instanceof HTMLLIElement) {
+                            let result = [];
+                            result.confidence = e.target.getAttribute("confidence");
+                            result.value = e.target.textContent;
+                            result.idx_suggestion = e.target.getAttribute("idx_suggestion");
                             list.classList.add('close');
                             input.value = e.target.textContent;
                             input.size = input.value.length;
                             list.style.width = `${input.offsetWidth}px`;
 
                             setTimeout(() => {
-                                resolve(e.target.textContent);
+                                resolve(result);
                             }, 75);
                         }
                     }
@@ -361,7 +371,9 @@
                 document.getElementById("stm-levels").hidden = false;
                 visualize(analyzerNode);
 
+                metrics.start_attempt();
                 mediaRecorder.start();
+                metrics.start_recording();
 
                 const copy = document.getElementById("stm-content");
                 loadAnimation(SPINNING_ANIMATION, true);
@@ -369,6 +381,7 @@
 
 
                 mediaRecorder.onstop = e => {
+                     metrics.stop_recording();
                     // handle clicking on close element by dumping recording data
                     if (SpeakToMePopup.closeClicked) {
                         SpeakToMePopup.closeClicked = false;
@@ -402,11 +415,13 @@
                         return;
                     }
 
+                    metrics.start_stt();
                     fetch(STT_SERVER_URL, {
                         method: "POST",
                         body: blob
                     })
                         .then(response => {
+                            metrics.end_stt();
                             return response.json();
                         })
                         .then(json => {
@@ -454,6 +469,7 @@
     // Click handler for stm icon
     const on_stm_icon_click = event => {
         event.preventDefault();
+        metrics.start_session();
         event.target.classList.add("stm-hidden");
         SpeakToMePopup.showAt(event.clientX, event.clientY);
         stm_init();
@@ -570,22 +586,27 @@
         // if the first result has a high enough confidence, just
         // use it directly.
         if (data[0].confidence > 0.9) {
-            metrics.attempt(data[0].confidence);
+            metrics.end_attempt(data[0].confidence, "accepted", 0);
+            metrics.end_session();
             stm_icon.set_input(data[0].text);
             SpeakToMePopup.hide();
             return;
         }
 
-        SpeakToMePopup.choose_item(data).then(text => {
-            metrics.attempt(); // TODO: pass the confidence here
-            stm_icon.set_input(text);
+        metrics.set_options_displayed();
+        SpeakToMePopup.choose_item(data).then(input => {
+            metrics.end_attempt(input.confidence, "accepted", input.idx_suggestion);
+            metrics.end_session();
+            stm_icon.set_input(input.value);
             // Once a choice is made, close the popup.
             SpeakToMePopup.hide();
         }, id => {
+            metrics.end_attempt(-1, "rejected", -1);
             if (id === "stm-reset-button") {
                 SpeakToMePopup.reset();
                 stm_init();
             } else {
+                metrics.end_session();
                 SpeakToMePopup.hide();
             }
         });
